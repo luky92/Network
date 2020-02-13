@@ -33,6 +33,11 @@ namespace Network
         private IPEndPoint localEndPoint;
 
         /// <summary>
+        /// The remote endpoint for the <see cref="client" />
+        /// </summary>
+        private IPEndPoint remoteEndPoint;
+
+        /// <summary>
         /// Stopwatch to measure the RTT for ping packets.
         /// </summary>
         private readonly Stopwatch rttStopWatch = new Stopwatch();
@@ -56,6 +61,8 @@ namespace Network
         internal UdpConnection(UdpClient udpClient, IPEndPoint remoteEndPoint, bool writeLock = false, bool skipInitializationProcess = false)
             : base()
         {
+            this.remoteEndPoint = remoteEndPoint;
+
             client = udpClient;
             AcknowledgePending = writeLock;
             socket = client.Client;
@@ -64,8 +71,8 @@ namespace Network
             ObjectMapRefreshed();
 
             KeepAlive = false;
-            socket.SendTimeout = 0;
-            socket.ReceiveTimeout = 0;
+            socket.SendTimeout = -1;
+            socket.ReceiveTimeout = -1;
 
             if (IsWindows)
                 socket.SetIPProtectionLevel(IPProtectionLevel.Unrestricted);
@@ -82,20 +89,20 @@ namespace Network
         #region Properties
 
         /// <inheritdoc />
-        public override IPEndPoint IPLocalEndPoint { get { return (IPEndPoint)client?.Client?.LocalEndPoint; } }
+        public override IPEndPoint IPLocalEndPoint => localEndPoint;
 
         /// <summary>
         /// The local <see cref="EndPoint"/> for the <see cref="socket"/>.
         /// </summary>
-        public EndPoint LocalEndPoint { get { return socket.LocalEndPoint; } }
+        public EndPoint LocalEndPoint => localEndPoint;
 
         /// <inheritdoc />
-        public override IPEndPoint IPRemoteEndPoint { get { return (IPEndPoint)client?.Client?.RemoteEndPoint; } }
+        public override IPEndPoint IPRemoteEndPoint => remoteEndPoint;
 
         /// <summary>
         /// The remote <see cref="EndPoint"/> for the <see cref="socket"/>.
         /// </summary>
-        public EndPoint RemoteEndPoint { get { return socket.RemoteEndPoint; } }
+        public EndPoint RemoteEndPoint => remoteEndPoint;
 
         /// <inheritdoc />
         public override bool DualMode { get { return socket.DualMode; } set { socket.DualMode = value; } }
@@ -186,10 +193,17 @@ namespace Network
         /// <inheritdoc />
         protected override byte[] ReadBytes(int amount)
         {
+            while (AcknowledgePending && IsAlive)
+                Thread.Sleep(IntPerformance);
+
             if (amount == 0) return new byte[0];
             while (receivedBytes.Count < amount)
             {
-                receivedBytes.AddRange(client.Receive(ref localEndPoint).GetEnumerator().ToList<byte>());
+                // https://referencesource.microsoft.com/#System/net/System/Net/Sockets/UDPClient.cs,57ff640dfcb1cbf0
+                // UdpClient.cs (695) 20.10.2019
+                // the reference does fuck up our localEndPoint. Hence, we need to create a buffer...
+                IPEndPoint buffer = new IPEndPoint(localEndPoint.Address, localEndPoint.Port);
+                receivedBytes.AddRange(client.Receive(ref buffer).GetEnumerator().ToList<byte>());
                 Thread.Sleep(IntPerformance);
             }
 
@@ -204,6 +218,7 @@ namespace Network
         {
             while (AcknowledgePending && IsAlive)
                 Thread.Sleep(IntPerformance);
+
             client.Send(bytes, bytes.Length);
         }
 
@@ -215,10 +230,7 @@ namespace Network
         }
 
         /// <inheritdoc />
-        protected override void CloseHandler(CloseReason closeReason)
-        {
-            Close(closeReason, true);
-        }
+        protected override void CloseHandler(CloseReason closeReason) => Close(closeReason, true);
 
         /// <inheritdoc />
         protected override void CloseSocket()
@@ -226,7 +238,6 @@ namespace Network
             socket.Close();
             client.Close();
         }
-
         #endregion Methods
     }
 }

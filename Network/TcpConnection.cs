@@ -1,6 +1,7 @@
 ﻿using Network.Enums;
 using Network.Packets;
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -129,7 +130,7 @@ namespace Network
         /// <param name="connectionEstablished">The action to perform upon connection.</param>
         internal void EstablishUdpConnection(Action<IPEndPoint, IPEndPoint> connectionEstablished)
         {
-            IPEndPoint udpEndPoint = new IPEndPoint(IPAddress.Any, GetFreePort());
+            IPEndPoint udpEndPoint = new IPEndPoint(IPLocalEndPoint.Address, GetFreePort());
             RegisterPacketHandler<EstablishUdpResponse>((packet, connection) =>
             {
                 UnRegisterPacketHandler<EstablishUdpResponse>(this);

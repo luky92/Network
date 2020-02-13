@@ -387,7 +387,7 @@
             optionally calling the <see cref="E:Network.Connection.ConnectionClosed"/> event.
             </summary>
             <param name="closeReason">The reason for connection closure.</param>
-            <param name="callCloseEvent">Whether to call the <see cref="E:Network.Connection.ConnectionClosed"/> event.</param>
+            <param name="callCloseEvent">Whether to call the <see cref="E:Network.Connection.ConnectionClosed"/> event. <c>True</c> the <see cref="T:Network.ClientConnectionContainer" /> tries to reconnect to it's endpoint afterwards again; Plus, calles the <see cref="E:Network.Connection.ConnectionClosed" /> event. Otherwise <c>False</c></param>
         </member>
         <member name="M:Network.ClientConnectionContainer.TCP_RegisterStaticPacketHandler``1(Network.Interfaces.PacketReceivedHandler{``0})">
             <inheritdoc cref="M:Network.Interfaces.IPacketHandler.RegisterStaticPacketHandler``1(Network.Interfaces.PacketReceivedHandler{``0})"/>
@@ -604,6 +604,11 @@
             A fixed hashcode that persists with the <see cref="T:Network.Connection"/> instance for its entire lifetime.
             </summary>
         </member>
+        <member name="E:Network.Connection.networkConnectionClosed">
+            <summary>
+            A handler which will be invoked if this connection is dead.
+            </summary>
+        </member>
         <member name="E:Network.Connection.connectionClosed">
             <summary>
             A handler which will be invoked if this connection is dead.
@@ -612,6 +617,11 @@
         <member name="E:Network.Connection.connectionEstablished">
             <summary>
             A handler which will be invoked if a new connection is established.
+            </summary>
+        </member>
+        <member name="F:Network.Connection.threadCancellationTokenSource">
+            <summary>
+            A token source to singal all internal threads to terminate.
             </summary>
         </member>
         <member name="F:Network.Connection.keepAlive">
@@ -631,16 +641,22 @@
             the remote <see cref="T:Network.Connection"/>.
             </summary>
         </member>
-        <member name="F:Network.Connection.readStreamThread">
-            <summary>
-            Reads packets from the network and places them into the <see cref="F:Network.Connection.receivedPackets"/> and
-            <see cref="F:Network.Connection.receivedUnknownPacketHandlerPackets"/> queues.
-            </summary>
-        </member>
         <member name="F:Network.Connection.packetAvailableEvent">
             <summary>
             An event set whenever a packet is received from the network. Used to save CPU time when waiting for a packet to be
             received.
+            </summary>
+        </member>
+        <member name="F:Network.Connection.dataAvailableEvent">
+            <summary>
+            An event set whenever a packet is available to be sent to the network. Used to save CPU time when waiting to
+            send a packet.
+            </summary>
+        </member>
+        <member name="F:Network.Connection.readStreamThread">
+            <summary>
+            Reads packets from the network and places them into the <see cref="F:Network.Connection.receivedPackets"/> and
+            <see cref="F:Network.Connection.receivedUnknownPacketHandlerPackets"/> queues.
             </summary>
         </member>
         <member name="F:Network.Connection.invokePacketThread">
@@ -651,12 +667,6 @@
         <member name="F:Network.Connection.writeStreamThread">
             <summary>
             Sends pending packets to the network from the <see cref="F:Network.Connection.sendPackets"/> queue.
-            </summary>
-        </member>
-        <member name="F:Network.Connection.dataAvailableEvent">
-            <summary>
-            An event set whenever a packet is available to be sent to the network. Used to save CPU time when waiting to
-            send a packet.
             </summary>
         </member>
         <member name="F:Network.Connection.packetConverter">
@@ -850,6 +860,12 @@
             handle only a specific set of packets, a custom <see cref="T:Network.Converter.IPacketConverter"/> can allow more throughput (no slowdowns
             due to relatively slow reflection).
             </remarks>
+        </member>
+        <member name="E:Network.Connection.NetworkConnectionClosed">
+            <summary>
+            Event signifying that a connection was closed between this <see cref="T:Network.Connection"/> instance and another <see cref="T:Network.Connection"/>.
+            This event is only visible for the network library itself. It garantuees, that the lib itself is capable of receiving connection state changes.
+            </summary>
         </member>
         <member name="E:Network.Connection.ConnectionClosed">
             <summary>
@@ -1125,6 +1141,11 @@
             upon instantiation and it is valid for the lifetime of this <see cref="T:Network.Connection"/> instance.
             </remarks>
         </member>
+        <member name="F:Network.Connection.isXpOrHigher">
+            <summary>
+            Determins whether the running client has windows xp or higher installed.
+            </summary>
+        </member>
         <member name="P:Network.Connection.Logger">
             <summary>
             The <see cref="T:Network.Logging.NetworkLog"/> instance to which information should be logged.
@@ -1156,6 +1177,13 @@
             Since an assembly cannot be transferred across an OS during runtime, this is a variable that can be set
             upon instantiation and it is valid for the lifetime of this <see cref="T:Network.Connection"/> instance.
             </remarks>
+        </member>
+        <member name="P:Network.Connection.IsXpOrHigher">
+            <summary>
+            Whether the executing assembly is running on Windows.
+            and the operating system is higher or equal to Windows XP.
+            </summary>
+            <value><c>true</c> if this instance is windows and xp or higher; otherwise, <c>false</c>.</value>
         </member>
         <member name="P:Network.Connection.EnableLogging">
             <summary>
@@ -2684,18 +2712,6 @@
             <param name="rsaParameter">The <see cref="T:System.Security.Cryptography.RSAParameters"/> instance that the extension method affects.</param>
             <returns>The XML <see cref="T:System.String"/> with the public key.</returns>
         </member>
-        <member name="T:Network.Extensions.ThreadExtensions">
-            <summary>
-            Provides additional functionality to the <see cref="T:System.Threading.Thread"/> class, that isn't available under .NET Standard 2.0.
-            </summary>
-        </member>
-        <member name="M:Network.Extensions.ThreadExtensions.AbortSave(System.Threading.Thread)">
-            <summary>
-            Allows for a <see cref="T:System.Threading.Thread"/> object to be aborted in a program running under the .NET Standard C# implementation.
-            </summary>
-            <param name="thread">The <see cref="T:System.Threading.Thread"/> instance this extension method affects.</param>
-            <returns>Whether the <see cref="M:System.Threading.Thread.Abort(System.Object)"/> method raised an exception.</returns>
-        </member>
         <member name="T:Network.Extensions.WaitHandleExtensions">
             <summary>
             Provides additional functionality to the <see cref="T:System.Threading.WaitHandle"/> class.
@@ -2931,7 +2947,7 @@
             <param name="packetObj">The <see cref="T:Network.Packets.Packet"/> object.</param>
             <param name="direction">The direction that the packet is traveling across the network.</param>
         </member>
-        <member name="M:Network.Logging.NetworkLog.BuildConsoleTable(System.Byte[],Network.Packets.Packet,System.String)">
+        <member name="M:Network.Logging.NetworkLog.BuildConsoleTable(System.Byte[],Network.Packets.Packet,Network.Logging.PacketDirection)">
             <summary>
             Builds a <see cref="T:ConsoleTables.ConsoleTable"/> with the given parameters and returns it.
             </summary>
@@ -3148,12 +3164,13 @@
             </summary>
             <seealso cref="T:Network.Packets.Packet" />
         </member>
-        <member name="M:Network.Packets.RSA.RSAKeyInformationRequest.#ctor(System.String,System.Int32)">
+        <member name="M:Network.Packets.RSA.RSAKeyInformationRequest.#ctor(System.String,System.Int32,System.Boolean)">
             <summary>
             Initializes a new instance of the <see cref="T:Network.Packets.RSA.RSAKeyInformationRequest"/> class.
             </summary>
             <param name="publicKey">The public key to share.</param>
             <param name="keySize">The size of the public key.</param>
+            <param name="enableOAEPadding">Use OAE Padding.</param>
         </member>
         <member name="P:Network.Packets.RSA.RSAKeyInformationRequest.PublicKey">
             <summary>
@@ -3164,6 +3181,12 @@
             <summary>
             The size of the RSA key.
             </summary>
+        </member>
+        <member name="P:Network.Packets.RSA.RSAKeyInformationRequest.UseOAEPadding">
+            <summary>
+            Gets or sets a value indicating whether the use OAE Padding.
+            </summary>
+            <value><c>true</c> if [use oae padding]; otherwise, <c>false</c>.</value>
         </member>
         <member name="T:Network.Packets.RSA.RSAKeyInformationResponse">
             <summary>
@@ -3227,20 +3250,6 @@
             Whether RSA encryption is currently active on this connection.
             </summary>
         </member>
-        <member name="F:Network.RSA.RSAConnection.MAX_ENCRYPTION_BYTE_SIZE">
-            <summary>
-            RSA is only capable of encrypting byte array of this size.
-            The max encryption size isn't abitrary; but indirectly set by
-            the <see chref="RSACryptoServiceProvider" />
-            </summary>
-        </member>
-        <member name="F:Network.RSA.RSAConnection.MAX_DECRYPTION_BYTE_SIZE">
-            <summary>
-            RSA is only capable of encrypting byte array of this size.
-            The max encryption size isn't abitrary; but indirectly set by
-            the <see chref="RSACryptoServiceProvider" />
-            </summary>
-        </member>
         <member name="M:Network.RSA.RSAConnection.#ctor(Network.Connection,Network.RSA.RSAPair)">
             <summary>
             Initializes a new instance of the <see cref="T:Network.RSA.RSAConnection"/> class.
@@ -3273,11 +3282,6 @@
             The local RSA key-pair for encryption, decryption, and signing.
             </summary>
         </member>
-        <member name="P:Network.RSA.RSAConnection.XPOrHigher">
-            <summary>
-            Whether the <see cref="T:Network.RSA.RSAConnection"/> is running on Windows XP or higher.
-            </summary>
-        </member>
         <member name="P:Network.RSA.RSAConnection.CommunicationPartnerRSAPair">
             <summary>
             The remote RSA key-pair.
@@ -3293,11 +3297,18 @@
             The <see cref="T:System.Security.Cryptography.RSACryptoServiceProvider"/> to use for decryption.
             </summary>
         </member>
+        <member name="P:Network.RSA.RSAConnection.IsOAEPaddingEnabled">
+            <summary>
+            Gets whether OAE Padding is active. OAE Padding is only active,
+            if both communication partners do support OAE Padding.
+            </summary>
+            <value><c>true</c> if OAE Padding is enabled; otherwise, <c>false</c>.</value>
+        </member>
         <member name="P:Network.RSA.RSAConnection.IsRSACommunicationActive">
             <summary>
             Whether the RSA functionality is active. RSA functionality requires an additional initialization process, thus
             won't be available immediately after the connection has been established. It will never revert to <c>false</c>
-            once set.
+            once set to <c>true</c>.
             </summary>
         </member>
         <member name="M:Network.RSA.RSAConnection.GetBytes(Network.Packets.Packet)">
@@ -3393,6 +3404,16 @@
             Stores an RSA public/private key-pair.
             </summary>
         </member>
+        <member name="F:Network.RSA.RSAPair.encryptionByteSize">
+            <summary>
+            The max packet size to encrypt.
+            </summary>
+        </member>
+        <member name="F:Network.RSA.RSAPair.decryptionByteSize">
+            <summary>
+            The max packet size to decrypt.
+            </summary>
+        </member>
         <member name="F:Network.RSA.RSAPair.PRIVATE_KEY_UNKNOWN">
             <summary>
             Replacement value to be used if the private key is unknown, i.e. when receiving an <see cref="T:Network.RSA.RSAPair"/> from
@@ -3408,13 +3429,24 @@
             <param name="privateKey">The private key (https://superdry.apphb.com/tools/online-rsa-key-converter).</param>
             <param name="keySize">The size of the key.</param>
         </member>
-        <member name="M:Network.RSA.RSAPair.#ctor(System.String,System.Int32)">
+        <member name="M:Network.RSA.RSAPair.#ctor(System.String,System.Int32,System.Boolean)">
             <summary>
             Initializes a new instance of the <see cref="T:Network.RSA.RSAPair"/> class. Used for internal purposes. The communication
             partner only sends us his public key to encrypt.
             </summary>
             <param name="publicKey">The public key.</param>
             <param name="keySize">The size of the key.</param>
+            <param name="eanbleOAEPadding">Use OAE Padding.</param>
+        </member>
+        <member name="M:Network.RSA.RSAPair.#ctor(System.String,System.String,System.Int32,System.Boolean)">
+            <summary>
+            Initializes a new instance of the <see cref="T:Network.RSA.RSAPair"/> class. Used for internal purposes. The communication
+            partner only sends us his public key to encrypt.
+            </summary>
+            <param name="publicKey">The public key (https://superdry.apphb.com/tools/online-rsa-key-converter).</param>
+            <param name="privateKey">The private key (https://superdry.apphb.com/tools/online-rsa-key-converter).</param>
+            <param name="keySize">The size of the key.</param>
+            <param name="eanbleOAEPadding">Use OAE Padding.</param>
         </member>
         <member name="P:Network.RSA.RSAPair.KeySize">
             <summary>
@@ -3430,6 +3462,24 @@
             <summary>
             The private RSA key.
             </summary>
+        </member>
+        <member name="P:Network.RSA.RSAPair.EnableOAEPadding">
+            <summary>
+            Gets a value indicating whether OAE Padding is enabled.
+            </summary>
+            <value><c>true</c> if [enable oae padding]; otherwise, <c>false</c>.</value>
+        </member>
+        <member name="P:Network.RSA.RSAPair.DecryptionByteSize">
+            <summary>
+            Gets the max size of an decrypted packet.
+            </summary>
+            <value>The size of the decryption byte.</value>
+        </member>
+        <member name="P:Network.RSA.RSAPair.EncryptionByteSize">
+            <summary>
+            Gets the max size of an encrypted packet.
+            </summary>
+            <value>The size of the encryption byte.</value>
         </member>
         <member name="P:Network.RSA.RSAPair.HasPublicKey">
             <summary>
@@ -3973,6 +4023,11 @@
         <member name="F:Network.UdpConnection.localEndPoint">
             <summary>
             The local endpoint for the <see cref="F:Network.UdpConnection.client"/>.
+            </summary>
+        </member>
+        <member name="F:Network.UdpConnection.remoteEndPoint">
+            <summary>
+            The remote endpoint for the <see cref="F:Network.UdpConnection.client" />
             </summary>
         </member>
         <member name="F:Network.UdpConnection.rttStopWatch">

@@ -50,12 +50,22 @@ namespace Network
         /// <summary>
         /// A handler which will be invoked if this connection is dead.
         /// </summary>
+        private event Action<CloseReason, Connection> networkConnectionClosed;
+
+        /// <summary>
+        /// A handler which will be invoked if this connection is dead.
+        /// </summary>
         private event Action<CloseReason, Connection> connectionClosed;
 
         /// <summary>
         /// A handler which will be invoked if a new connection is established.
         /// </summary>
         private event Action<TcpConnection, UdpConnection> connectionEstablished;
+
+        /// <summary>
+        /// A token source to singal all internal threads to terminate.
+        /// </summary>
+        private CancellationTokenSource threadCancellationTokenSource = new CancellationTokenSource(Timeout.Infinite);
 
         #region Ping Variables
 
@@ -78,19 +88,26 @@ namespace Network
 
         #endregion Ping Variables
 
-        #region Thread Variables
-
-        /// <summary>
-        /// Reads packets from the network and places them into the <see cref="receivedPackets"/> and
-        /// <see cref="receivedUnknownPacketHandlerPackets"/> queues.
-        /// </summary>
-        private Thread readStreamThread;
-
+        #region ResetEvents
         /// <summary>
         /// An event set whenever a packet is received from the network. Used to save CPU time when waiting for a packet to be
         /// received.
         /// </summary>
         private readonly AutoResetEvent packetAvailableEvent = new AutoResetEvent(false);
+
+        /// <summary>
+        /// An event set whenever a packet is available to be sent to the network. Used to save CPU time when waiting to
+        /// send a packet.
+        /// </summary>
+        private readonly AutoResetEvent dataAvailableEvent = new AutoResetEvent(false);
+        #endregion ResetEvents
+
+        #region Thread Variables
+        /// <summary>
+        /// Reads packets from the network and places them into the <see cref="receivedPackets"/> and
+        /// <see cref="receivedUnknownPacketHandlerPackets"/> queues.
+        /// </summary>
+        private Thread readStreamThread;
 
         /// <summary>
         /// Handles received packets by invoked their respective <see cref="PacketReceivedHandler{P}"/>.
@@ -101,13 +118,6 @@ namespace Network
         /// Sends pending packets to the network from the <see cref="sendPackets"/> queue.
         /// </summary>
         private Thread writeStreamThread;
-
-        /// <summary>
-        /// An event set whenever a packet is available to be sent to the network. Used to save CPU time when waiting to
-        /// send a packet.
-        /// </summary>
-        private readonly AutoResetEvent dataAvailableEvent = new AutoResetEvent(false);
-
         #endregion Thread Variables
 
         #region Packet Variables
@@ -219,11 +229,21 @@ namespace Network
 
         #region Properties
 
+#if !DEBUG
         /// <summary>
         /// The timeout value in milliseconds. If the connection does not receive any packet within the specified timeout,
         /// the connection will timeout and shutdown.
         /// </summary>
         public int TIMEOUT { get; set; } = 2500;
+#endif
+
+#if DEBUG
+        /// <summary>
+        /// The timeout value in milliseconds. If the connection does not receive any packet within the specified timeout,
+        /// the connection will timeout and shutdown.
+        /// </summary>
+        public int TIMEOUT { get; set; } = int.MaxValue;
+#endif
 
         /// <summary>
         /// The amount of <see cref="Packets"/> that are pending handling that this <see cref="Connection"/> will buffer.
@@ -240,9 +260,9 @@ namespace Network
         /// Whether this <see cref="Connection"/> is alive and able to communicate with the <see cref="Connection"/> at
         /// the <see cref="IPRemoteEndPoint"/>.
         /// </summary>
-        public bool IsAlive { get { return readStreamThread.IsAlive && writeStreamThread.IsAlive && invokePacketThread.IsAlive; } }
+        public bool IsAlive { get { return readStreamThread.IsAlive && writeStreamThread.IsAlive && invokePacketThread.IsAlive && !threadCancellationTokenSource.IsCancellationRequested; } }
 
-        #region Socket Properties
+#region Socket Properties
 
         /// <summary>
         /// The local <see cref="IPEndPoint"/> for this <see cref="Connection"/> instance.
@@ -300,7 +320,7 @@ namespace Network
         /// </summary>
         public abstract bool UseLoopback { get; set; }
 
-        #endregion Socket Properties
+#endregion Socket Properties
 
         /// <summary>
         /// Whether this <see cref="Connection"/> should send a keep alive packet to the <see cref="IPRemoteEndPoint"/> at
@@ -359,6 +379,16 @@ namespace Network
 
         /// <summary>
         /// Event signifying that a connection was closed between this <see cref="Connection"/> instance and another <see cref="Connection"/>.
+        /// This event is only visible for the network library itself. It garantuees, that the lib itself is capable of receiving connection state changes.
+        /// </summary>
+        internal event Action<CloseReason, Connection> NetworkConnectionClosed
+        {
+            add { networkConnectionClosed += value; }
+            remove { networkConnectionClosed -= value; }
+        }
+
+        /// <summary>
+        /// Event signifying that a connection was closed between this <see cref="Connection"/> instance and another <see cref="Connection"/>.
         /// </summary>
         public event Action<CloseReason, Connection> ConnectionClosed
         {
@@ -370,17 +400,17 @@ namespace Network
         /// Event signifying that this <see cref="Connection"/> instance established a new connection with either a <see cref="TcpConnection"/>
         /// or <see cref="UdpConnection"/> instance.
         /// </summary>
-        public event Action<TcpConnection, UdpConnection> ConnectionEstablished
+        internal event Action<TcpConnection, UdpConnection> ConnectionEstablished
         {
             add { connectionEstablished += value; }
             remove { connectionEstablished -= value; }
         }
 
-        #endregion Properties
+#endregion Properties
 
-        #region Methods
+#region Methods
 
-        #region Implementation of IPacketHandler
+#region Implementation of IPacketHandler
 
         /// <inheritdoc />
         public void RegisterStaticPacketHandler<T>(PacketReceivedHandler<T> handler) where T : Packet
@@ -443,7 +473,7 @@ namespace Network
         /// </param>
         public void UnRegisterRawDataHandler(string key) => packetHandlerMap.UnRegisterStaticRawDataHandler(key);
 
-        #endregion Implementation of IPacketHandler
+#endregion Implementation of IPacketHandler
 
         /// <summary>
         /// Registers all <see cref="Packet"/> inheritors in the given <see cref="Assembly"/> with this <see cref="Connection"/>.
@@ -480,7 +510,7 @@ namespace Network
                 });
         }
 
-        #region Packet Handler Manipulation
+#region Packet Handler Manipulation
 
         /// <summary>
         /// Returns the current <see cref="PacketHandlerMap"/> instance, so that
@@ -507,7 +537,7 @@ namespace Network
             ObjectMapRefreshed();
         }
 
-        #endregion Packet Handler Manipulation
+#endregion Packet Handler Manipulation
 
         /// <summary>
         /// Configures the <see cref="nextPingStopWatch"/> timer.
@@ -523,7 +553,7 @@ namespace Network
 #endif
         }
 
-        #region Sending Packets
+#region Sending Packets
 
         /// <summary>
         /// Sends a <see cref="PingRequest"/>, if a <see cref="PingResponse"/> is not currently being awaited.
@@ -576,9 +606,9 @@ namespace Network
             dataAvailableEvent.Set();
         }
 
-        #endregion Sending Packets
+#endregion Sending Packets
 
-        #region Threads
+#region Threads
 
         /// <summary>
         /// Reads bytes from the network.
@@ -619,15 +649,17 @@ namespace Network
                     Packet receivedPacket = packetConverter.GetPacket(typeByte[packetType], packetData);
                     receivedPackets.Enqueue(receivedPacket);
                     receivedPacket.Size = packetLength;
-                    packetAvailableEvent.Set();
 
                     Logger.LogInComingPacket(packetData, receivedPacket);
+
+                    packetAvailableEvent.Set();
                 }
             }
-            catch (ThreadAbortException) { return; }
             catch (Exception exception)
             {
-                Logger.Log("Reading packet from stream", exception, LogLevel.Exception);
+                if (!threadCancellationTokenSource.IsCancellationRequested)
+                    Logger.Log("Reading packet from stream", exception, LogLevel.Exception);
+                else return;
             }
 
             CloseHandler(CloseReason.ReadPacketThreadException);
@@ -642,8 +674,10 @@ namespace Network
             {
                 while (true)
                 {
-                    //Wait till we receive a packet.
-                    packetAvailableEvent.WaitOne();
+                    WaitHandle.WaitAny(new WaitHandle[] { packetAvailableEvent, threadCancellationTokenSource.Token.WaitHandle });
+
+                    // exit the endless loop via an exception if the network threads have been signaled to abort.
+                    threadCancellationTokenSource.Token.ThrowIfCancellationRequested();
 
                     while (receivedPackets.Count > 0)
                     {
@@ -656,7 +690,7 @@ namespace Network
                     }
                 }
             }
-            catch (ThreadAbortException) { return; }
+            catch (OperationCanceledException) { return; }
             catch (Exception exception)
             {
                 Logger.Log($"Delegating packet to subscribers.", exception, LogLevel.Exception);
@@ -713,8 +747,10 @@ namespace Network
             {
                 while (true)
                 {
-                    //Wait till we have something to send.
-                    dataAvailableEvent.WaitOne(TIMEOUT);
+                    WaitHandle.WaitAny(new WaitHandle[] { dataAvailableEvent, threadCancellationTokenSource.Token.WaitHandle }, TIMEOUT);
+
+                    // exit the endless loop via an exception if the network threads have been signaled to abort.
+                    threadCancellationTokenSource.Token.ThrowIfCancellationRequested();
 
                     WriteSubWork();
 
@@ -732,18 +768,18 @@ namespace Network
                     }
                 }
             }
-            catch (ThreadAbortException) { return; }
+            catch (OperationCanceledException) { return; }
             catch (Exception exception)
             {
                 Logger.Log("Write object on stream", exception, LogLevel.Exception);
             }
 
-            CloseHandler(Enums.CloseReason.WritePacketThreadException);
+            CloseHandler(CloseReason.WritePacketThreadException);
         }
 
-        #endregion Threads
+#endregion Threads
 
-        #region Handling Packets
+#region Handling Packets
 
         /// <summary>
         /// Handles all default <see cref="Packet"/>s that are in the library.
@@ -775,7 +811,7 @@ namespace Network
             else if (packet.GetType().Equals(typeof(EstablishUdpRequest)))
             {
                 EstablishUdpRequest establishUdpRequest = (EstablishUdpRequest)packet;
-                IPEndPoint udpEndPoint = new IPEndPoint(IPAddress.Any, GetFreePort());
+                IPEndPoint udpEndPoint = new IPEndPoint(IPLocalEndPoint.Address, GetFreePort());
                 Send(new EstablishUdpResponse(udpEndPoint.Port, establishUdpRequest));
                 UdpConnection udpConnection = CreateUdpConnection(udpEndPoint,
                     new IPEndPoint(IPRemoteEndPoint.Address, establishUdpRequest.UdpPort), true);
@@ -794,7 +830,7 @@ namespace Network
             else if (packet.GetType().Equals(typeof(AddPacketTypeRequest)))
             {
                 Assembly assembly = AppDomain.CurrentDomain.GetAssemblies().Where(a => a.FullName == ((AddPacketTypeRequest)packet).AssemblyName).SingleOrDefault();
-                if (assembly == null) CloseHandler(Enums.CloseReason.AssemblyDoesNotExist);
+                if (assembly == null) CloseHandler(CloseReason.AssemblyDoesNotExist);
                 else AddExternalPackets(assembly);
                 Send(new AddPacketTypeResponse(typeByte.Values.ToList(), (AddPacketTypeRequest)packet));
                 return;
@@ -890,9 +926,9 @@ namespace Network
             }
         }
 
-        #endregion Handling Packets
+#endregion Handling Packets
 
-        #region Closing The Connection
+#region Closing The Connection
 
         /// <summary>
         /// Handles a <see cref="Connection"/> closure, with the given <see cref="CloseReason"/>.
@@ -911,11 +947,14 @@ namespace Network
         /// <param name="closeReason">The reason for the <see cref="Connection"/> closing.</param>
         internal void ExternalClose(CloseReason closeReason)
         {
-            writeStreamThread.AbortSave();
-            readStreamThread.AbortSave();
+            networkConnectionClosed?.Invoke(closeReason, this);
             connectionClosed?.Invoke(closeReason, this);
-            invokePacketThread.AbortSave();
+
+            // close all sockets (throw an exception during any read or write operation)
             CloseSocket();
+
+            // singal all threads to exit their routine.
+            threadCancellationTokenSource.Cancel();
         }
 
         /// <summary>
@@ -942,16 +981,20 @@ namespace Network
                 Logger.Log($"Couldn't send a close-message '{closeReason.ToString()}' to the endpoint.", exception, LogLevel.Warning);
             }
 
+            // always inform the internal network lib about the lost connection.
+            networkConnectionClosed?.Invoke(closeReason, this);
+
             if (callCloseEvent)
                 connectionClosed?.Invoke(closeReason, this);
 
-            writeStreamThread.AbortSave();
-            readStreamThread.AbortSave();
-            invokePacketThread.AbortSave();
+            // close all sockets (throw an exception during any read or write operation)
             CloseSocket();
+
+            // singal all threads to exit their routine.
+            threadCancellationTokenSource.Cancel();
         }
 
-        #endregion Closing The Connection
+#endregion Closing The Connection
 
         /// <summary>
         /// Unlocks the connection and allows for data to be sent and received.
@@ -982,7 +1025,7 @@ namespace Network
         protected virtual UdpConnection CreateUdpConnection(IPEndPoint localEndPoint, IPEndPoint remoteEndPoint, bool writeLock) =>
             new UdpConnection(new UdpClient(localEndPoint), remoteEndPoint, writeLock);
 
-        #endregion Methods
+#endregion Methods
 
         /// <summary>
         /// Returns The unique hashcode of this <see cref="Connection"/> instance.
